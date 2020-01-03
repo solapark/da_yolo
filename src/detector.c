@@ -1465,3 +1465,93 @@ void run_detector(int argc, char **argv)
     }
     else printf(" There isn't such command: %s", argv[2]);
 }
+
+void gen_pseudo_label(char *datacfg, char *cfgfile, char *weightfile, char **filenames, float thresh, float hier_thresh, int dont_show, int ext_output, int save_labels, char *outfile, int train_images_num)
+{
+    list *options = read_data_cfg(datacfg);
+    char *name_list = option_find_str(options, "names", "data/names.list");
+    int names_size = 0;
+    char **names = get_labels_custom(name_list, &names_size); //get_labels(name_list);
+
+    image **alphabet = load_alphabet();
+    network net = parse_network_cfg_custom(cfgfile, 1, 1); // set batch=1
+    if (weightfile) {
+        load_weights(&net, weightfile);
+    }
+    fuse_conv_batchnorm(net);
+    calculate_binary_weights(net);
+    if (net.layers[net.n - 1].classes != names_size) {
+        printf(" Error: in the file %s number of names %d that isn't equal to classes=%d in the file %s \n",
+            name_list, names_size, net.layers[net.n - 1].classes, cfgfile);
+        if (net.layers[net.n - 1].classes > names_size) getchar();
+    }
+    srand(2222222);
+    char buff[256];
+    char *input = buff;
+    int j;
+    float nms = .45;    // 0.4F
+	printf("thresh : %f\n", thresh);
+	for ( int p = 0 ; p < train_images_num ; p++){
+        strncpy(input, filenames[p], 256);
+        if (strlen(input) > 0)
+			if (input[strlen(input) - 1] == 0x0d) input[strlen(input) - 1] = 0;
+
+        image im = load_image(input, 0, 0, net.c);
+        image sized = resize_image(im, net.w, net.h);
+        int letterbox = 0;
+        layer l = net.layers[net.n - 1];
+
+        float *X = sized.data;
+        network_predict(net, X);
+        int nboxes = 0;
+        detection *dets = get_network_boxes(&net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes, letterbox);
+        if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
+
+        // pseudo labeling concept - fast.ai
+        if (save_labels)
+        {
+            char labelpath[4096];
+            replace_image_to_label(input, labelpath);
+
+            FILE* fw = fopen(labelpath, "wb");
+            int i;
+            for (i = 0; i < nboxes; ++i) {
+                char buff[1024];
+                int class_id = -1;
+                float prob = 0;
+                for (j = 0; j < l.classes; ++j) {
+                    if (dets[i].prob[j] > thresh && dets[i].prob[j] > prob) {
+                        prob = dets[i].prob[j];
+                        class_id = j;
+                    }
+                }
+                if (class_id >= 0) {
+                    sprintf(buff, "%d %2.4f %2.4f %2.4f %2.4f %2.4f\n", class_id, dets[i].bbox.x, dets[i].bbox.y, dets[i].bbox.w, dets[i].bbox.h, prob);
+                    fwrite(buff, sizeof(char), strlen(buff), fw);
+                }
+            }
+            fclose(fw);
+		}
+        free_detections(dets, nboxes);
+        free_image(im);
+        free_image(sized);
+		if(p%100==0) printf("gen pseudo label %d/%d DONE\n", p+1, train_images_num);
+    }
+
+    // free memory
+    free_ptrs((void**)names, net.layers[net.n - 1].classes);
+    free_list_contents_kvp(options);
+    free_list(options);
+
+    int i;
+    const int nsize = 8;
+    for (j = 0; j < nsize; ++j) {
+        for (i = 32; i < 127; ++i) {
+            free_image(alphabet[j][i]);
+        }
+        free(alphabet[j]);
+    }
+    free(alphabet);
+
+    free_network(net);
+}
