@@ -10,6 +10,8 @@ extern "C" {
 #endif
 layer make_yolo_layer(int batch, int w, int h, int n, int total, int *mask, int classes, int max_boxes);
 void forward_yolo_layer(const layer l, network_state state);
+void forward_yolo_layer_original(const layer l, network_state state);
+void forward_yolo_layer_pseudo(const layer l, network_state state);
 void backward_yolo_layer(const layer l, network_state state);
 void resize_yolo_layer(layer *l, int w, int h);
 int yolo_num_detections(layer l, float thresh);

@@ -28,6 +28,7 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     char *train_images = option_find_str(options, "train", "data/train.txt");
     char *valid_images = option_find_str(options, "valid", train_images);
     char *backup_directory = option_find_str(options, "backup", "/backup/");
+    //char *target_images = option_find_str(options, "target", "__");
 
     network net_map;
     if (calc_map) {
@@ -95,6 +96,23 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     int train_images_num = plist->size;
     char **paths = (char **)list_to_array(plist);
 
+    list *target_list;
+    int target_images_num;
+    char **target_path;
+
+    /*
+	if(net.pseudo_train){
+        target_list = get_paths(target_images);
+        target_images_num = target_list->size;
+        target_path = (char **)list_to_array(target_list);
+    }
+    */
+/*
+    list *target_list = get_paths(target_images);
+    int target_images_num = target_list->size;
+    char **target_path = (char **)list_to_array(target_list);
+*/
+
     int init_w = net.w;
     int init_h = net.h;
     int iter_save, iter_save_last, iter_map;
@@ -102,6 +120,23 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     iter_save_last = get_current_batch(net);
     iter_map = get_current_batch(net);
     float mean_average_precision = -1;
+
+    int pseudo_update_for_each, iter_pseudo_update, pseudo_update_cnt;
+	if(net.pseudo_train){
+		printf("pseudo_train\n");
+		pseudo_update_for_each = net.pseudo_update_epoch * train_images_num / (net.batch * net.subdivisions);  // pseudo_update_for_each each x Epochs
+		iter_pseudo_update = get_current_batch(net) + pseudo_update_for_each;
+		//iter_pseudo_update = 1;
+		pseudo_update_cnt = 0;
+		for (int p = 0; p < ngpus; p++) {
+			modify_yolo_layer(&nets[p]);
+		}
+		if(net.generate_first_label){
+			gen_pseudo_label(datacfg, cfgfile, weightfile, paths, net.ignore_lb, 0.5, 1, 0, 1, 0, train_images_num);
+		}
+		//printf("net.pseudo_update_epoch : %d, train_images_num : %d, net.batch : %d, net.subdivisions : %d, get_current_batch(net) : %d\n", net.pseudo_update_epoch, train_images_num, net.batch, net.subdivisions, get_current_batch(net));
+		printf("1st generation of pseudo label : %d\n", iter_pseudo_update);
+	}
 
     load_args args = { 0 };
     args.w = net.w;
@@ -148,6 +183,34 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     int count = 0;
     //while(i*imgs < N*120){
     while (get_current_batch(net) < net.max_batches) {
+		if (net.pseudo_update_epoch  && get_current_batch(net) >= iter_pseudo_update){
+			printf("pseudo_label update\n");
+			//save weights
+            char buff[256];
+            sprintf(buff, "%s/%s_pseudo_update%d_lb_%2.2f_ub_%2.2f_%d.weights", backup_directory, base, pseudo_update_cnt++, nets[0].ignore_lb, nets[0].ignore_ub, get_current_batch(net) );
+            save_weights(net, buff);
+			
+			//generate new labels
+			for (int p = 0; p < ngpus; p++) {
+				update_yolo_layer_lb_ub(&(nets[p]));
+			}
+		    if (nets[0].ignore_lb > nets[0].ignore_ub) {
+                printf("lb > ub\n");
+                break;
+            }
+			gen_pseudo_label(datacfg, cfgfile, buff, paths, nets[0].ignore_lb, 0.5, 1, 0, 1, 0, train_images_num);
+            //gen_pseudo_label(datacfg, cfgfile, buff, target_path, nets[0].ignore_lb, 0.5, 1, 0, 1, 0, target_images_num);
+
+			//update variable 
+			iter_pseudo_update =get_current_batch(net) +  pseudo_update_for_each;
+			printf("next generation of pseudo label : %d\n", iter_pseudo_update);
+
+			//remove previous load data
+            pthread_join(load_thread, 0);
+            train = buffer;
+            free_data(train);
+            load_thread = load_data(args);
+		}
         if (l.random && count++ % 10 == 0) {
             printf("Resizing\n");
             float random_val = rand_scale(1.4);    // *x or /x
@@ -233,7 +296,8 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
             if (i < net.burn_in * 3) fprintf(stderr, "\n Tensor Cores are disabled until the first %d iterations are reached.", 3 * net.burn_in);
             else fprintf(stderr, "\n Tensor Cores are used.");
         }
-        printf("\n %d: %f, %f avg loss, %f rate, %lf seconds, %d images\n", get_current_batch(net), loss, avg_loss, get_current_rate(net), (what_time_is_it_now() - time), i*imgs);
+        //printf("\n %d: %f, %f avg loss, %f rate, %lf seconds, %d images\n", get_current_batch(net), loss, avg_loss, get_current_rate(net), (what_time_is_it_now() - time), i*imgs);
+        printf(" %d: %f, %f avg loss, %f rate, %lf seconds, %d images\n", get_current_batch(net), loss, avg_loss, get_current_rate(net), (what_time_is_it_now() - time), i*imgs);
 
         int draw_precision = 0;
         if (calc_map && (i >= next_map_calc || i == net.max_batches)) {
@@ -1555,3 +1619,35 @@ void gen_pseudo_label(char *datacfg, char *cfgfile, char *weightfile, char **fil
 
     free_network(net);
 }
+
+void modify_yolo_layer(network* net){
+	printf("modify_yolo_layer. net.ignore_lb : %f, net.ignore_ub : %f\n", net->ignore_lb, net->ignore_ub);
+    int i;
+    for(i = 0; i < net->n; ++i){
+        layer* l = &(net->layers[i]);
+		if(l->type == YOLO){
+			l->pseudo_train = 1;
+			l->ignore_lb = net->ignore_lb;
+			l->ignore_ub = net->ignore_ub;
+			l->truths = l->max_boxes*(4 + 1 + 1);    // 90*(4 + 1 + 1);
+			//printf("l.pseudo_train : %d, l.ignore_lb : %f, l.ignore_ub : %f, l.truths : %d\n",l->pseudo_train, l->ignore_lb, l->ignore_ub, l->truths);
+		}
+	}
+}
+
+void update_yolo_layer_lb_ub(network* net){
+	net->ignore_lb = net->ignore_lb + net->ignore_lb_change;
+	net->ignore_ub = net->ignore_ub + net->ignore_ub_change;
+	printf("update_yolo_layer_lb_ub. net.ignore_lb : %f, net.ignore_ub : %f\n", net->ignore_lb, net->ignore_ub);
+	
+    int i;
+    for(i = 0; i < net->n; ++i){
+        layer* l = &(net->layers[i]);
+		if(l->type == YOLO){
+			l->ignore_lb = net->ignore_lb;
+			l->ignore_ub = net->ignore_ub;
+		}
+	}
+}
+
+
