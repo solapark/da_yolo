@@ -159,6 +159,7 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     args.hue = net.hue;
     if (dont_show && show_imgs) show_imgs = 2;
     args.show_imgs = show_imgs;
+    args.pseudo_train = net.pseudo_train;
 
 #ifdef OPENCV
     args.threads = 3 * ngpus;   // Amazon EC2 Tesla V100: p3.2xlarge (8 logical cores) - p3.16xlarge
