@@ -371,9 +371,9 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                     int obj_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 4);
                     avg_anyobj += l.output[obj_index];
                     l.delta[obj_index] = 0 - l.output[obj_index];
-                    //if (best_iou > l.ignore_thresh) {
+                    if (best_iou > l.ignore_thresh) {
                     //if (best_iou > l.ignore_thresh || l.output[obj_index] > l.ignore_lb) {
-                    if (best_iou > 0) {
+                    //if (best_iou > 0) {
                         l.delta[obj_index] = 0;
                     }
                     if (best_iou > l.truth_thresh) {
@@ -400,12 +400,10 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
 
             if(!truth.x) break;  // continue;
             float truth_prob = state.truth[t*(4 + 1 + 1) + b*l.truths + 5];
-            /*
 			if (truth_prob < l.ignore_lb){
 				//printf("t : %d, FP, truth_prob = %f\n", t, truth_prob);
 				continue;
 			}
-            */
             float best_iou = 0;
             int best_n = 0;
             i = (truth.x * l.w);
@@ -426,8 +424,8 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
             int mask_n = int_index(l.mask, best_n, l.n);
             if(mask_n >= 0){
                 int obj_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4);
-                //if (l.ignore_lb <= truth_prob && truth_prob < l.ignore_ub){
-                if (truth_prob < l.ignore_ub){
+                if (l.ignore_lb <= truth_prob && truth_prob < l.ignore_ub){
+                //if (truth_prob < l.ignore_ub){
                     //printf("t : %d, ignore, truth_prob = %f\n", t, truth_prob);
                     l.delta[obj_index] = 0;
                     continue;
