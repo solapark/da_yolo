@@ -374,8 +374,8 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                     //printf("best_t : %d, best_iou : %f, l.output :%f ", best_t, best_iou, l.output[obj_index]);
                     l.delta[obj_index] = 0 - l.output[obj_index];
                     //if (best_iou > l.ignore_thresh) {
-                    //if (best_iou > l.ignore_thresh || l.output[obj_index] > l.ignore_lb) {
-                    if (best_iou > .9) {
+                    if (best_iou > l.ignore_thresh || l.output[obj_index] > l.ignore_lb) {
+                    //if (best_iou > .9) {
                     //if (best_iou > 0) {
                         l.delta[obj_index] = 0;
                         //printf("// best_out %f > l.ignore_thresh %f, l.delta = %f", best_iou, l.ignore_thresh, l.delta[obj_index]); 
