@@ -362,6 +362,7 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                             continue; // if label contains class_id more than number of classes in the cfg-file
                         }
                         if(!truth.x) break;  // continue;
+                        //printf("%d truth: %d %f %f %f %f %f\n", t, class_id, truth.x, truth.y, truth.w, truth.h, state.truth[t*(4 + 1 + 1) + b*l.truths + 5]);
                         float iou = box_iou(pred, truth);
                         if (iou > best_iou) {
                             best_iou = iou;
@@ -370,14 +371,19 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                     }
                     int obj_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 4);
                     avg_anyobj += l.output[obj_index];
+                    //printf("best_t : %d, best_iou : %f, l.output :%f ", best_t, best_iou, l.output[obj_index]);
                     l.delta[obj_index] = 0 - l.output[obj_index];
-                    if (best_iou > l.ignore_thresh) {
-                    //if (best_iou > l.ignore_thresh || l.output[obj_index] > l.ignore_lb) {
+                    //if (best_iou > l.ignore_thresh) {
+                    if (best_iou > l.ignore_thresh || l.output[obj_index] > l.ignore_lb) {
                     //if (best_iou > 0) {
                         l.delta[obj_index] = 0;
+                        //printf("// best_out %f > l.ignore_thresh %f, l.delta = %f", best_iou, l.ignore_thresh, l.delta[obj_index]); 
+                        //getchar();
                     }
                     if (best_iou > l.truth_thresh) {
                         l.delta[obj_index] = 1 - l.output[obj_index];
+                        //printf("// best_out %f > l.truth_thresh %f, l.delta = %f", best_iou, l.truth_thresh, l.delta[obj_index]); 
+                        //getchar();
 
                         //int class_id = state.truth[best_t*(4 + 1) + b*l.truths + 4];
                         int class_id = state.truth[best_t*(4 + 1 +1) + b*l.truths + 4];
@@ -388,6 +394,7 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                         box truth = float_to_box_stride(state.truth + best_t*(4 + 1 + 1) + b*l.truths, 1);
                         delta_yolo_box(truth, l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h);
                     }
+                    //printf("// l.delta = %f\n", l.delta[obj_index]);
                 }
             }
         }
@@ -400,8 +407,11 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
 
             if(!truth.x) break;  // continue;
             float truth_prob = state.truth[t*(4 + 1 + 1) + b*l.truths + 5];
-			if (truth_prob < l.ignore_lb){
+            //printf("truth prob : %f ", truth_prob);
+			if (truth_prob < l.ignore_ub){
 				//printf("t : %d, FP, truth_prob = %f\n", t, truth_prob);
+			    //printf("truth_prob %f < l.ignore_lb %f \n", truth_prob, l.ignore_lb);
+                //getchar();
 				continue;
 			}
             float best_iou = 0;
@@ -423,13 +433,18 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
 
             int mask_n = int_index(l.mask, best_n, l.n);
             if(mask_n >= 0){
+			    //printf("mask_n >= 0, ");
                 int obj_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4);
+                /*
                 if (l.ignore_lb <= truth_prob && truth_prob < l.ignore_ub){
                 //if (truth_prob < l.ignore_ub){
                     //printf("t : %d, ignore, truth_prob = %f\n", t, truth_prob);
                     l.delta[obj_index] = 0;
+			        //printf("l.ignore_lb %f <= truth_prob %f < l.ignore_ub %f // l.delta = 0\n", l.ignore_lb, truth_prob, l.ignore_ub);
+                    //getchar();
                     continue;
                 }
+                */
                 int box_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 0);
 
                 float iou = delta_yolo_box(truth, l.output, l.biases, best_n, box_index, i, j, l.w, l.h, state.net.w, state.net.h, l.delta, (2-truth.w*truth.h), l.w*l.h);
@@ -448,7 +463,10 @@ void forward_yolo_layer_pseudo(const layer l, network_state state)
                 if(iou > .5) recall += 1;
                 if(iou > .75) recall75 += 1;
                 avg_iou += iou;
+                //printf("l.delta = %f", l.delta[obj_index]);
             }
+            //getchar();
+            //printf("\n");
         }
     }
     *(l.cost) = pow(mag_array(l.delta, l.outputs * l.batch), 2);
